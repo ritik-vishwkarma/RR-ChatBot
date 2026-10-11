@@ -1,0 +1,39 @@
+spring:
+  config:
+    import: optional:file:./.env[.properties]
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/chatbot}
+    username: ${DB_USER:chatbot}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+
+server:
+  port: 8080
+  servlet:
+    session:
+      cookie:
+        name: SID
+        http-only: true
+        secure: ${COOKIE_SECURE:false}
+        same-site: lax
+
+ai:
+  webhook:
+    url: ${AI_WEBHOOK_URL}
+    secret: ${AI_WEBHOOK_SECRET}
+
+security:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER:chatbot-api}
+    access-seconds: 900
+    refresh-seconds: 864000
+app:
+  cookies:
+    secure: ${COOKIE_SECURE:false}

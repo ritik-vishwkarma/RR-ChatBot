@@ -1,0 +1,21 @@
+# Local secrets and configuration
+.env
+.env.*
+!.env.example
+
+# Maven/build output
+target/
+
+# Test evidence may be intentionally kept or committed; do not blanket-ignore it.
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+.env
+
+__pycache__/
+*.py[cod]
+target/
+.env

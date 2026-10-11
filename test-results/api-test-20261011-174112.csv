@@ -1,0 +1,2 @@
+﻿"Id","Status","Test","Details","Timestamp"
+"RUN-SETUP","BLOCKED","Test run reached an unexpected blocker","MethodInvocationException: Exception calling ""GetResult"" with ""0"" argument(s): ""An error occurred while sending the request.""","2026-10-11 17:41:12"

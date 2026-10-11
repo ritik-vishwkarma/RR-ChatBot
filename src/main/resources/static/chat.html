@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chat</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side">
+    <button class="btn" id="newBtn">+ New chat</button>
+    <nav class="list" id="list" aria-label="Chat history"></nav>
+    <div class="user"><span id="who"></span><button id="logout">Log out</button></div>
+  </aside>
+  <section class="main">
+    <div class="top"><button id="menu" aria-label="Open chats">☰</button></div>
+    <div class="msgs" id="msgs"><div class="wrap" id="wrap"></div></div>
+    <div class="composer">
+      <form id="form">
+        <textarea id="input" rows="1" placeholder="Message" aria-label="Message"></textarea>
+        <button class="btn primary" type="submit">Send</button>
+      </form>
+    </div>
+  </section>
+</div>
+<script src="app.js"></script>
+<script src="chat.js"></script>
+</body>
+</html>
