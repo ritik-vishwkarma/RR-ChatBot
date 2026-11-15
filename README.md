@@ -1,161 +1,485 @@
-# Chatbot — Spring Boot, PostgreSQL, Vanilla JavaScript
+# RR-ChatBot
 
-A local chatbot application built with Java 17, Spring Boot, PostgreSQL, and a vanilla HTML/CSS/JavaScript frontend. Authentication uses HttpOnly access and refresh cookies, CSRF protection, refresh-token rotation, and chat ownership checks.
-
-> **Note:** This README describes the local development and QA setup. The included AI webhook is a deterministic test stub; it does not call a real AI provider.
+A full-stack chatbot application built with **Java 17, Spring Boot,
+PostgreSQL, and a vanilla HTML/CSS/JavaScript frontend**, with a
+separate **Python AI webhook service**.
 
 ## Application Screenshot
 
 ![Chatbot UI showing chat history and mock AI responses](image.png)
 
-## Table of Contents
+The repository supports two workflows:
 
-- [Requirements](#requirements)
-- [Project Layout](#project-layout)
-- [1. Install and Verify Prerequisites](#1-install-and-verify-prerequisites)
-- [2. Create a PostgreSQL Database](#2-create-a-postgresql-database)
-- [3. Configure Environment Variables](#3-configure-environment-variables)
-- [4. Build and Test](#4-build-and-test)
-- [5. Start the Mock AI Webhook](#5-start-the-mock-ai-webhook)
-- [6. Start the Spring Boot Application](#6-start-the-spring-boot-application)
-- [7. Open and Test the Frontend](#7-open-and-test-the-frontend)
-- [8. Run API Regression Tests](#8-run-api-regression-tests)
-- [9. Verify Database Persistence](#9-verify-database-persistence)
-- [Troubleshooting](#troubleshooting)
-- [Security Notes](#security-notes)
+1.  **Local development and QA** --- run the Java backend, Python
+    webhook, and PostgreSQL locally, either directly or with Docker
+    Compose.
+2.  **Hosted deployment** --- deploy the Java and Python containers as
+    two independent services on Render, with PostgreSQL hosted
+    separately (for example, on Neon).
 
-## Requirements
+> **Current AI implementation:** The Python service is a deterministic
+> integration-test stub. It validates the webhook request and returns a
+> fixed test response. It does not call an LLM or a real AI provider.
 
-Install the following software before starting:
+------------------------------------------------------------------------
 
-| Requirement | Version / Default |
-|---|---|
-| Java JDK | 17 or newer |
-| Maven | 3.9+ recommended |
-| PostgreSQL | Local instance, port `5432` |
-| Python | 3.10+ for the local AI stub |
-| Browser | Recent Chrome, Edge, or Firefox |
-| Node.js | Optional, for JavaScript syntax checks |
+## Table of contents
 
-Verify your installations in PowerShell:
+-   [Architecture](#architecture)
+-   [Technology stack](#technology-stack)
+-   [Repository structure](#repository-structure)
+-   [Application features](#application-features)
+-   [Prerequisites](#prerequisites)
+-   [Local development](#local-development)
+    -   [Option A: Docker Compose](#option-a-docker-compose)
+    -   [Option B: Run services
+        directly](#option-b-run-services-directly)
+-   [Environment variables](#environment-variables)
+-   [Production deployment on Render](#production-deployment-on-render)
+-   [Frontend and API routing](#frontend-and-api-routing)
+-   [Testing and database
+    verification](#testing-and-database-verification)
+-   [Troubleshooting](#troubleshooting)
+-   [Security and production
+    limitations](#security-and-production-limitations)
 
-```powershell
-java -version
-mvn -version
-python --version
-Test-NetConnection 127.0.0.1 -Port 5432
+------------------------------------------------------------------------
+
+## Architecture
+
+### Logical architecture
+
+``` text
+                         Browser
+                            |
+                         HTTPS
+                            |
+                            v
+              +---------------------------+
+              | Java Spring Boot service |
+              |                           |
+              | - Serves frontend files   |
+              | - Authentication         |
+              | - Chat and message APIs  |
+              | - Authorization          |
+              +---------------------------+
+                    |              |
+             JDBC / TLS       HTTPS webhook
+                    |              |
+                    v              v
+          +----------------+  +----------------------+
+          | PostgreSQL     |  | Python AI service    |
+          | (e.g. Neon)    |  |                      |
+          |                |  | - GET /health        |
+          | users          |  | - POST /ai           |
+          | chats          |  | - Shared-secret check|
+          | messages       |  | - Test response      |
+          +----------------+  +----------------------+
 ```
 
-## Project Layout
+### Local Docker Compose networking
 
-Run commands from the project directory containing `pom.xml`.
+When both containers are run through Docker Compose, the Java container
+reaches Python using the Compose service name:
 
-```text
-chatbot/
+``` text
+http://python-ai:8090/ai
+```
+
+Do not use `localhost` or `127.0.0.1` for container-to-container
+communication. Inside a container, those addresses refer to that same
+container.
+
+### Hosted Render networking
+
+The hosted services are independent. The Java service calls the Python
+service using its public HTTPS URL and the `X-Webhook-Secret` header.
+
+Current service URLs:
+
+  -----------------------------------------------------------------------------------
+  Service                             URL
+  ----------------------------------- -----------------------------------------------
+  Java application and frontend       https://rr-chatbot-java.onrender.com
+
+  Python webhook                      https://rr-chatbot-python.onrender.com
+
+  Python health endpoint              https://rr-chatbot-python.onrender.com/health
+
+  Python AI endpoint                  https://rr-chatbot-python.onrender.com/ai
+  -----------------------------------------------------------------------------------
+
+The browser should call the Java service only. It should not call the
+Python webhook directly and must never receive the webhook secret.
+
+------------------------------------------------------------------------
+
+## Technology stack
+
+  -----------------------------------------------------------------------
+  Layer                   Technology              Responsibility
+  ----------------------- ----------------------- -----------------------
+  Backend                 Java 17                 Application and
+                                                  business logic
+
+  Backend framework       Spring Boot             HTTP server and REST
+                                                  APIs
+
+  Persistence             Spring Data JPA /       Database access and ORM
+                          Hibernate               
+
+  Database                PostgreSQL              Users, chats, messages
+                                                  and related data
+
+  Hosted database option  Neon PostgreSQL         Managed PostgreSQL
+                                                  hosting
+
+  Frontend                HTML, CSS, vanilla      Browser UI
+                          JavaScript              
+
+  AI integration service  Python                  Webhook contract and
+                                                  response generation
+
+  Containerization        Docker                  Package Java and Python
+                                                  independently
+
+  Local orchestration     Docker Compose          Run both containers
+                                                  together locally
+
+  Build                   Maven                   Compile, test and
+                                                  package Java
+
+  Hosting                 Render                  Host the Java and
+                                                  Python web services
+  -----------------------------------------------------------------------
+
+The frontend is packaged inside the Spring Boot application under:
+
+``` text
+java-backend/src/main/resources/static/
+```
+
+A separate frontend hosting service is not required for this
+architecture.
+
+------------------------------------------------------------------------
+
+## Repository structure
+
+The following is the intended source layout. Build output such as
+`target/` is generated and should not be treated as source code.
+
+``` text
+RR-ChatBot/
+│
+├── java-backend/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── pom.xml
+│   ├── src/
+│   │   ├── main/
+│   │   │   ├── java/
+│   │   │   │   └── com/example/chatbot/
+│   │   │   └── resources/
+│   │   │       ├── application.yml
+│   │   │       └── static/
+│   │   │           ├── index.html
+│   │   │           ├── login.html
+│   │   │           ├── chat.html
+│   │   │           ├── css/
+│   │   │           ├── js/
+│   │   │           └── assets/
+│   │   └── test/
+│   │       └── java/com/example/chatbot/
+│   ├── target/                 # Generated by Maven; do not commit
+│   └── test-results/           # Generated test reports, if produced
+│
+├── python-ai/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── requirements.txt
+│   └── app/
+│       ├── __init__.py
+│       └── main.py             # Python webhook entry point
+│
+├── docker-compose.yml
 ├── .env.example
 ├── .gitignore
-├── pom.xml
-├── scripts/
-│   ├── Preflight.ps1
-│   ├── Test-ChatbotApi.ps1
-│   └── mock-ai-webhook.py
-├── docs/
-│   ├── BASELINE_REVIEW.md
-│   ├── SAMPLE_TEST_OUTPUT.md
-│   ├── TEST_CASE_MATRIX.csv
-│   ├── TEST_REPORT_TEMPLATE.md
-│   └── TESTING_GUIDE.md
-└── src/
-    ├── main/
-    │   ├── java/com/example/chatbot/
-    │   └── resources/
-    │       ├── application.yml
-    │       └── static/
-    └── test/java/com/example/chatbot/
+├── image.png
+└── README.md
 ```
 
-## 1. Install and Verify Prerequisites
+The exact frontend filenames and Python entry-point filename should
+match the files in the repository. If they differ, update this diagram
+and the corresponding commands.
 
-Open PowerShell in the project root. For example:
+------------------------------------------------------------------------
 
-```powershell
-Set-Location "D:\Ritik\chatbot\src-token\chatbot-qa-test-pack\chatbot"
-```
+## Application features
 
-Use your actual extracted project path if it differs.
+The application README and QA workflow describe these capabilities:
 
-Run the preflight script:
+-   User registration and login.
+-   Access and refresh authentication cookies marked `HttpOnly`.
+-   CSRF protection for state-changing requests.
+-   Refresh-token rotation and replay/reuse detection.
+-   Chat and message persistence.
+-   Chat ownership checks to prevent users accessing another user's
+    chats.
+-   Rate limiting.
+-   Logout and authentication-state handling.
+-   Java-to-Python webhook integration.
 
-```powershell
-.\scripts\Preflight.ps1
-```
+The exact behavior should be verified against the implementation and
+automated tests. A README description is not proof that a control is
+correctly implemented.
 
-The script checks Java, Maven, Python, the project root, and common ports. PostgreSQL should be running. Ports `8080` and `8090` should normally be available before starting the application and mock webhook.
+------------------------------------------------------------------------
 
-## 2. Create a PostgreSQL Database
+## Prerequisites
 
-Open pgAdmin's Query Tool or connect through `psql` as a PostgreSQL administrator.
+### For direct local development
 
-Create a dedicated local test role and database:
+  Requirement   Version / notes
+  ------------- --------------------------------------------------------
+  Java JDK      17
+  Maven         3.9+ recommended
+  Python        3.10+; use the version supported by the Python service
+  PostgreSQL    Local instance, or a development PostgreSQL database
+  Browser       Recent Chrome, Edge or Firefox
+  PowerShell    For the example Windows commands
 
-```sql
-CREATE ROLE chatbot_test
-LOGIN PASSWORD 'replace_with_a_local_test_password';
+### For Docker Compose local development
 
-CREATE DATABASE chatbot_test
-OWNER chatbot_test;
-```
+-   Docker Engine or Docker Desktop with Docker Compose v2.
+-   A PostgreSQL database reachable by the Java container. The Compose
+    file in this repository may use an external database rather than
+    starting a PostgreSQL container; check its service definitions.
 
-Replace the example password with a unique local password.
+### For Render deployment
 
-If the role and database already exist, do not run these statements again. Use your existing test database.
+-   A GitHub repository containing the application.
+-   A Render account and a workspace configured for the intended plan.
+-   A PostgreSQL connection string, such as a Neon connection string.
+-   Production environment variables configured separately for each
+    Render service.
 
-Verify the database:
+Docker does not need to be installed on your computer to deploy from
+GitHub to Render when Render is configured to build from the
+repository's Dockerfiles. Docker is required if you want to build and
+run the containers locally.
 
-```sql
-SELECT datname
-FROM pg_database
-WHERE datname = 'chatbot_test';
-```
+------------------------------------------------------------------------
 
-Use a disposable database for automated API tests. Do not run regression tests against production or a database containing important personal data.
+## Local development
 
-## 3. Configure Environment Variables
+### Option A: Docker Compose
 
-The application reads a `.env` file from the project root through `application.yml`.
+Run these commands from the repository root (the directory containing
+`docker-compose.yml`).
 
-Copy the template:
+1.  Create a local `.env` from the example:
 
-```powershell
+``` powershell
 Copy-Item .env.example .env
 notepad .env
 ```
 
-Configure the values to match your local PostgreSQL installation.
+2.  Set local database credentials, JWT secret and webhook secret in
+    `.env`. Do not commit `.env`.
 
-Example `.env`:
+3.  Validate the Compose configuration:
 
-```properties
-DB_URL=jdbc:postgresql://127.0.0.1:5432/chatbot_test
-DB_USER=chatbot_test
-DB_PASSWORD=replace_with_a_local_test_password
+``` powershell
+docker compose config
+```
+
+4.  Build the images:
+
+``` powershell
+docker compose build
+```
+
+5.  Start both services:
+
+``` powershell
+docker compose up
+```
+
+6.  Open the Java application:
+
+``` text
+http://localhost:8080/
+```
+
+7.  Check the Python health endpoint from the host if the Compose file
+    publishes the Python port:
+
+``` powershell
+Invoke-RestMethod http://localhost:8090/health
+```
+
+8.  Stop the services:
+
+``` powershell
+docker compose down
+```
+
+The Java service should use the Compose service DNS name for the Python
+webhook:
+
+``` text
+http://python-ai:8090/ai
+```
+
+The Compose file's port mappings and environment variable names are
+authoritative. If they differ from these examples, follow the actual
+`docker-compose.yml`.
+
+### Option B: Run services directly
+
+This option does not require Docker.
+
+#### 1. Configure environment
+
+Create `.env` from `.env.example` in the repository root. Use a local
+PostgreSQL database and a local webhook URL:
+
+``` properties
+DB_URL=jdbc:postgresql://127.0.0.1:5432/chatbot
+DB_USER=your_local_database_user
+DB_PASSWORD=your_local_database_password
 
 AI_WEBHOOK_URL=http://127.0.0.1:8090/ai
-AI_WEBHOOK_SECRET=local-only-test-secret
+AI_WEBHOOK_SECRET=replace_with_a_local_test_secret
 
-JWT_SECRET=REPLACE_WITH_BASE64_ENCODED_32_RANDOM_BYTES
+JWT_SECRET=replace_with_a_base64_encoded_random_secret
 JWT_ISSUER=chatbot-api
 
 COOKIE_SECURE=false
 ```
 
-These are properties-style `KEY=value` lines. Do not add PowerShell `$env:` prefixes to the `.env` file.
+Use the variable names expected by the current `application.yml` and
+Python code. Do not paste real secrets into documentation, Git commits,
+screenshots or issue reports.
 
-### Generate a JWT Secret
+#### 2. Start Python
 
-Generate 32 random bytes and encode them in Base64 using PowerShell:
+Open a terminal in the repository root and start the Python service
+using the entry point present in `python-ai`.
 
-```powershell
+For the documented package layout:
+
+``` powershell
+python -m app.main
+```
+
+If running that command from the repository root, set the Python module
+search path first:
+
+``` powershell
+$env:PYTHONPATH = ".\python-ai"
+python -m app.main
+```
+
+Alternatively, run the actual Python file directly if the entry-point
+filename or package layout differs.
+
+The Python service must listen on an address reachable by the Java
+process. For local host-based development, use `127.0.0.1` or `0.0.0.0`
+as appropriate.
+
+Check:
+
+``` powershell
+Invoke-RestMethod http://127.0.0.1:8090/health
+```
+
+#### 3. Start Java
+
+Open another terminal:
+
+``` powershell
+Set-Location .\java-backend
+mvn clean verify
+mvn spring-boot:run
+```
+
+The application should be available at:
+
+``` text
+http://127.0.0.1:8080/
+```
+
+If the `.env` file is loaded relative to the working directory, ensure
+the application's configuration import points to the correct file. The
+root `.env` will not automatically be found from every working directory
+unless the configuration is set up for it.
+
+#### 4. Open the frontend
+
+The frontend is served by Spring Boot from `src/main/resources/static/`.
+
+Typical routes, if these files exist in the static directory:
+
+  Page    Local URL
+  ------- ----------------------------------
+  Home    http://127.0.0.1:8080/
+  Login   http://127.0.0.1:8080/login.html
+  Chat    http://127.0.0.1:8080/chat.html
+
+The browser should use relative API paths such as `/api/v1`. Do not
+hardcode `localhost` in frontend JavaScript for production.
+
+------------------------------------------------------------------------
+
+## Environment variables
+
+Environment variables must be configured separately for local
+development and hosted deployment.
+
+### Java service
+
+  --------------------------------------------------------------------------------------------
+  Variable                Purpose                 Local example
+  ----------------------- ----------------------- --------------------------------------------
+  `DB_URL`                PostgreSQL JDBC URL     `jdbc:postgresql://127.0.0.1:5432/chatbot`
+
+  `DB_USER`               Database username       Local database role
+
+  `DB_PASSWORD`           Database password       Local database password
+
+  `AI_WEBHOOK_URL`        Python webhook endpoint `http://127.0.0.1:8090/ai`
+
+  `AI_WEBHOOK_SECRET`     Shared webhook secret   Local-only secret
+
+  `JWT_SECRET`            JWT signing secret      Base64-encoded random bytes
+
+  `JWT_ISSUER`            JWT issuer claim        `chatbot-api`
+
+  `COOKIE_SECURE`         Secure-cookie flag      `false` for local HTTP; `true` for HTTPS
+
+  `PORT`                  HTTP server port        `8080` if not supplied by the host
+  --------------------------------------------------------------------------------------------
+
+### Python service
+
+  -----------------------------------------------------------------------
+  Variable                            Purpose
+  ----------------------------------- -----------------------------------
+  `AI_WEBHOOK_SECRET`                 Secret expected in
+                                      `X-Webhook-Secret`
+
+  `PORT`                              Port supplied by the hosting
+                                      platform; local default may be
+                                      `8090`
+  -----------------------------------------------------------------------
+
+The Java and Python `AI_WEBHOOK_SECRET` values must match exactly.
+
+### Generate a JWT secret on Windows
+
+``` powershell
 $bytes = New-Object byte[] 32
 $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 $rng.GetBytes($bytes)
@@ -164,213 +488,206 @@ $rng.Dispose()
 $jwtSecret
 ```
 
-Copy the generated value into `.env` as `JWT_SECRET`.
+Copy the generated value into your local `.env` or the Java service's
+production environment variables. Never commit it.
 
-Do not commit `.env` to Git, share it, or include secret values in screenshots or bug reports. Confirm that `.env` is covered by `.gitignore`.
+------------------------------------------------------------------------
 
-### Environment Variable Reference
+## Production deployment on Render
 
-| Variable | Purpose |
-|---|---|
-| `DB_URL` | JDBC URL for PostgreSQL |
-| `DB_USER` | PostgreSQL username |
-| `DB_PASSWORD` | Password for that database role |
-| `AI_WEBHOOK_URL` | URL called by the Java backend |
-| `AI_WEBHOOK_SECRET` | Shared secret sent to the webhook |
-| `JWT_SECRET` | Base64-encoded JWT signing secret |
-| `JWT_ISSUER` | JWT issuer claim |
-| `COOKIE_SECURE` | `false` for local HTTP; `true` for HTTPS deployment |
+The application is deployed as two independent Render web services.
 
-The mock webhook defaults to `127.0.0.1:8090` and uses `local-only-test-secret`.
+### Service 1: Python AI webhook
 
-Keep `AI_WEBHOOK_SECRET` equal to the mock webhook's secret for local testing. If you change the mock's secret, set `MOCK_AI_WEBHOOK_SECRET` in the terminal used to start it and use the same value in `.env`.
+  Render setting                   Value
+  -------------------------------- -------------------------------------
+  Service type                     Web Service
+  Runtime                          Docker
+  Repository                       `ritik-vishwkarma/RR-ChatBot`
+  Branch                           `main`
+  Root Directory                   Leave blank
+  Dockerfile Path                  `python-ai/Dockerfile`
+  Docker Build Context Directory   `python-ai`
+  Health Check Path                `/health`
+  Instance plan                    Free, if available in the workspace
 
-## 4. Build and Test
+Configure the Python environment variables:
 
-Ensure PostgreSQL is running and `.env` is configured.
-
-Run the preflight script:
-
-```powershell
-.\scripts\Preflight.ps1
+``` text
+AI_WEBHOOK_SECRET=<same secret used by Java>
 ```
 
-Then compile the application and execute the automated Maven checks:
+Allow Render to provide its `PORT` environment variable. The Python
+server must bind to `0.0.0.0` and listen on that port.
 
-```powershell
+Verify:
+
+``` text
+https://rr-chatbot-python.onrender.com/health
+```
+
+Expected status: HTTP 200.
+
+The `/ai` endpoint must accept a POST request with JSON and the
+`X-Webhook-Secret` header.
+
+### Service 2: Java Spring Boot application
+
+  Render setting                   Value
+  -------------------------------- -------------------------------------
+  Service type                     Web Service
+  Runtime                          Docker
+  Repository                       `ritik-vishwkarma/RR-ChatBot`
+  Branch                           `main`
+  Root Directory                   Leave blank
+  Dockerfile Path                  `java-backend/Dockerfile`
+  Docker Build Context Directory   `java-backend`
+  Instance plan                    Free, if available in the workspace
+
+Configure the Java environment variables:
+
+  Variable              Production value
+  --------------------- ----------------------------------------------
+  `DB_URL`              Neon PostgreSQL JDBC connection URL
+  `DB_USER`             Neon database username
+  `DB_PASSWORD`         Neon database password
+  `AI_WEBHOOK_URL`      `https://rr-chatbot-python.onrender.com/ai`
+  `AI_WEBHOOK_SECRET`   Same secret configured in Python
+  `JWT_SECRET`          Strong, randomly generated production secret
+  `JWT_ISSUER`          `chatbot-api`
+  `COOKIE_SECURE`       `true`
+  `PORT`                Use the port supplied by Render
+
+Do not put credentials in the Dockerfile, source code, frontend
+JavaScript or GitHub repository.
+
+After changing environment variables, redeploy the relevant service.
+
+### Production URLs
+
+  Purpose                     URL
+  --------------------------- -----------------------------------------------
+  Frontend and Java backend   https://rr-chatbot-java.onrender.com
+  Python health               https://rr-chatbot-python.onrender.com/health
+  Python webhook              https://rr-chatbot-python.onrender.com/ai
+
+### Verify the production integration
+
+1.  Open the Python `/health` URL and confirm HTTP 200.
+2.  Send a test POST request to Python `/ai` with the correct shared
+    secret.
+3.  Open the Java service URL.
+4.  Register or log in.
+5.  Create a chat and send a message.
+6.  Confirm the deterministic test response is displayed.
+7.  Inspect Render runtime logs for Java and Python errors.
+
+A successful Python health check only proves that the process is
+running. It does not prove that the `/ai` contract, shared secret or
+Java-to-Python integration works.
+
+------------------------------------------------------------------------
+
+## Frontend and API routing
+
+The frontend is packaged into the Java Spring Boot JAR.
+
+Source directory:
+
+``` text
+java-backend/src/main/resources/static/
+```
+
+Spring Boot serves these static resources from the same origin as the
+REST API.
+
+Example:
+
+``` javascript
+const API_BASE = "/api/v1";
+```
+
+Use relative API paths so that the same frontend works locally and on
+Render.
+
+The frontend must not: - Call the Python webhook directly. - Contain
+`AI_WEBHOOK_SECRET`. - Contain database credentials or JWT signing
+secrets. - Hardcode `localhost` or a development server address for
+production.
+
+The browser communicates with Java. Java communicates with Python.
+
+------------------------------------------------------------------------
+
+## Testing and database verification
+
+### Build and test Java
+
+From `java-backend/`:
+
+``` powershell
 mvn clean verify
 ```
 
-A successful build ends with:
+A successful Maven verification should finish with:
 
-```text
+``` text
 BUILD SUCCESS
 ```
 
-Resolve compilation errors or failed tests before continuing.
+### Test Python health
 
-### Optional JavaScript Syntax Checks
+Local:
 
-If Node.js is installed, run:
-
-```powershell
-node --check .\src\main\resources\static\app.js
-node --check .\src\main\resources\static\login.js
-node --check .\src\main\resources\static\chat.js
-```
-
-No output and exit code `0` indicates a successful syntax check.
-
-## 5. Start the Mock AI Webhook
-
-Open **Terminal 1** in the project root. Start the local AI stub:
-
-```powershell
-python .\scripts\mock-ai-webhook.py
-```
-
-Leave this terminal running.
-
-The expected startup message is similar to:
-
-```text
-Local AI test stub listening on http://127.0.0.1:8090/ai
-```
-
-Check its health endpoint from another terminal:
-
-```powershell
+``` powershell
 Invoke-RestMethod http://127.0.0.1:8090/health
 ```
 
-The response should indicate a healthy test stub.
+Production:
 
-The mock returns a deterministic reply similar to:
-
-```text
-TEST_STUB_REPLY: received user message
+``` powershell
+Invoke-RestMethod https://rr-chatbot-python.onrender.com/health
 ```
 
-This verifies the application-to-webhook integration. It does not generate real AI responses.
+### Test the Python webhook
 
-## 6. Start the Spring Boot Application
+``` powershell
+$secret = Read-Host "Enter AI_WEBHOOK_SECRET"
 
-Open **Terminal 2** in the project root. Keep the mock webhook running in Terminal 1.
+$headers = @{
+    "X-Webhook-Secret" = $secret
+}
 
-Start Spring Boot:
+$body = @{
+    messages = @(
+        @{
+            role = "user"
+            content = "Test message"
+        }
+    )
+} | ConvertTo-Json -Depth 5
 
-```powershell
-mvn spring-boot:run
+Invoke-RestMethod `
+    -Uri "https://rr-chatbot-python.onrender.com/ai" `
+    -Method POST `
+    -Headers $headers `
+    -ContentType "application/json" `
+    -Body $body
 ```
 
-Wait until Spring Boot reports that the application has started.
+Expected test-stub reply:
 
-The application should be available at:
-
-```text
-http://127.0.0.1:8080
+``` json
+{
+  "reply": "TEST_STUB_REPLY: received user message"
+}
 ```
 
-The current JPA configuration may use `ddl-auto: update`, allowing Hibernate to create or update tables during startup.
+### Verify PostgreSQL persistence
 
-### Verify CSRF Bootstrap
+Connect to the configured database using pgAdmin or `psql`.
 
-Open **Terminal 3** and run:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8080/api/v1/csrf
-```
-
-The endpoint should return a successful response containing a non-empty CSRF token. Do not share the token value.
-
-If startup fails, check the Spring Boot terminal and confirm:
-
-- PostgreSQL is running.
-- `DB_URL`, `DB_USER`, and `DB_PASSWORD` are correct.
-- `JWT_SECRET` contains valid Base64-encoded random material.
-- The AI webhook URL and secret are configured.
-- Ports `8080` and `8090` are not occupied by other processes.
-
-## 7. Open and Test the Frontend
-
-Open the following URLs in your browser:
-
-| Page | URL |
-|---|---|
-| Home | http://127.0.0.1:8080/ |
-| Login | http://127.0.0.1:8080/login.html |
-| Chat | http://127.0.0.1:8080/chat.html |
-
-### First-Use Flow
-
-1. Open the login page.
-2. Register using an email address and a password of at least 12 characters, subject to the configured maximum.
-3. Log in using the new account.
-4. Create or open a chat.
-5. Send a message.
-6. Confirm the mock AI response appears.
-7. Refresh the page and confirm the chat and messages remain available.
-
-If the UI reports that the AI service is unavailable, verify that Terminal 1 is still running and that the webhook secret in `.env` matches the mock's secret.
-
-### Verify Authentication Cookies
-
-In browser DevTools:
-
-1. Open **Application** or **Storage**.
-2. Select **Cookies** for `http://127.0.0.1:8080`.
-3. Confirm that the access and refresh authentication cookies are marked `HttpOnly`.
-
-Do not copy cookie values into screenshots or reports.
-
-The CSRF token is separate from authentication credentials. State-changing requests should send it in the `X-XSRF-TOKEN` request header.
-
-For more detailed browser checks, refer to `docs/TESTING_GUIDE.md`.
-
-## 8. Run API Regression Tests
-
-Keep Spring Boot running. Open Terminal 3 in the project root.
-
-Run:
-
-```powershell
-.\scripts\Test-ChatbotApi.ps1
-```
-
-If PowerShell blocks script execution, use a process-scoped execution policy bypass:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\Test-ChatbotApi.ps1
-```
-
-The regression suite checks API behavior such as:
-
-- Registration and login
-- Authentication and CSRF
-- Rate limiting
-- Cookie behavior
-- Chat and message persistence
-- Cross-user chat ownership
-- Refresh-token rotation and replay detection
-- Logout behavior
-
-The script writes Markdown and CSV reports under `test-results/`.
-
-### Important Testing Notes
-
-- Run tests only against the dedicated test database.
-- The suite creates synthetic test accounts.
-- Restart Spring Boot before a full run if the in-memory rate limiter has accumulated requests.
-- Review every `FAIL`, `BLOCKED`, or `SKIP` result in the report.
-- A passing test run only establishes the results of that particular run.
-
-## 9. Verify Database Persistence
-
-Connect to `chatbot_test` in pgAdmin.
-
-Check the number of records:
-
-```sql
+``` sql
 SELECT COUNT(*) AS total_users FROM users;
 
 SELECT COUNT(*) AS total_chats FROM chats;
@@ -378,9 +695,9 @@ SELECT COUNT(*) AS total_chats FROM chats;
 SELECT COUNT(*) AS total_messages FROM messages;
 ```
 
-### Check Messages Per Chat
+Check messages per chat:
 
-```sql
+``` sql
 SELECT
     c.id,
     c.owner,
@@ -392,130 +709,169 @@ GROUP BY c.id, c.owner, c.title
 ORDER BY c.created_at DESC;
 ```
 
-A chat with `message_count = 0` has no persisted messages.
+Use a disposable test database for automated regression tests. Never run
+destructive tests against production data.
 
-If sending a message fails because the AI webhook is unavailable, the backend may not save that exchange. Check the API response and Spring Boot logs to determine what happened.
+------------------------------------------------------------------------
 
 ## Troubleshooting
 
-### Database Connection or Hibernate Dialect Error
+### Java root URL returns an internal server error
 
-If you see `Unable to determine Dialect` or a database connection error:
+If the Java URL returns a JSON error instead of the frontend:
 
-1. Confirm PostgreSQL is running on port `5432`.
-2. Verify `DB_URL`, `DB_USER`, and `DB_PASSWORD`.
-3. Confirm the database role can connect to the database.
-4. Restart Spring Boot after changing `.env`.
+1.  Inspect the Java Render runtime logs at the time of the request.
+2.  Check for `ERROR`, `Exception`, `Caused by` and resource-not-found
+    messages.
+3.  Confirm the frontend files are under
+    `java-backend/src/main/resources/static/`.
+4.  Confirm `index.html` is packaged into the JAR under
+    `BOOT-INF/classes/static/`.
+5.  Check whether a controller mapping for `/` intercepts static
+    resource handling.
+6.  Test `/index.html` separately from `/`.
 
-### Missing or Invalid JWT Secret
+### Python service does not start
 
-Generate a new Base64-encoded secret using the instructions above. Update `.env` and restart the application.
+1.  Inspect the Python Render runtime logs.
+2.  Confirm that the Dockerfile copies the actual Python application
+    directory.
+3.  Confirm that the Docker startup command matches the real module or
+    script path.
+4.  Confirm the application binds to `0.0.0.0`.
+5.  Confirm it listens on the platform-provided `PORT`.
 
-Do not use a short, human-readable password as the signing secret.
+A module error such as `No module named app.main` usually means the
+configured Python module path does not match the files copied into the
+container.
 
-### AI Service Unavailable / HTTP 502
+### Java receives HTTP 502 from Python
 
-Check the mock webhook terminal and run:
+1.  Check that the Python Render service is live.
+2.  Check the Python `/health` endpoint.
+3.  Confirm `AI_WEBHOOK_URL` ends with `/ai`.
+4.  Confirm Java and Python use exactly the same `AI_WEBHOOK_SECRET`.
+5.  Check Python runtime logs.
+6.  Account for cold-start delays on free services and configure a
+    bounded webhook timeout.
 
-```powershell
-Test-NetConnection 127.0.0.1 -Port 8090
+### Python returns HTTP 401
+
+The `X-Webhook-Secret` value is missing or does not match the configured
+Python secret.
+
+### Python returns HTTP 400
+
+Check the request body. The test stub expects a non-empty `messages`
+array whose final item has a string `content` property.
+
+### Java returns HTTP 401 or 403
+
+-   For HTTP 401, inspect authentication cookies and login/refresh
+    behavior.
+-   For HTTP 403, inspect CSRF token handling and
+    authorization/ownership checks.
+-   Check the browser Network panel and Java logs.
+
+### Java returns HTTP 429
+
+The configured rate limiter may have reached its limit. Do not disable
+rate limiting in production.
+
+### Frontend loads but CSS or JavaScript is missing
+
+1.  Open browser DevTools → Network.
+2.  Inspect failed CSS, JavaScript and asset requests.
+3.  Confirm asset paths and filenames match the files under `static/`.
+4.  Check case sensitivity: Linux hosting is case-sensitive.
+5.  Confirm the latest frontend files were included in the Docker build
+    context and JAR.
+
+------------------------------------------------------------------------
+
+## Security and production limitations
+
+-   Keep `.env` local and exclude it from Git.
+-   Rotate any secret that has been committed or exposed.
+-   Use `COOKIE_SECURE=true` over HTTPS.
+-   Keep JWT signing secrets and webhook secrets server-side.
+-   The Python webhook is publicly addressable on Render. Shared-secret
+    validation is required, but a public URL with a shared secret is not
+    equivalent to private networking or service identity authentication.
+-   Restrict request sizes and validate webhook payloads.
+-   Use HTTPS for Java-to-Python communication.
+-   Do not expose PostgreSQL credentials to the browser.
+-   The README's deterministic Python service is for integration
+    testing, not real AI inference.
+-   Review `spring.jpa.hibernate.ddl-auto`. `update` may be convenient
+    for a prototype, but production schema changes should use reviewed,
+    versioned database migrations.
+-   In-memory rate limiting and in-flight request guards do not
+    coordinate across multiple application instances.
+-   Render free services may sleep after inactivity and have limited
+    memory, bandwidth and included instance-hours. Availability and
+    free-plan quotas can change. Check the current Render pricing and
+    usage dashboard before deployment.
+-   Do not assume that every resource associated with a free service is
+    free. Check the workspace plan, payment method, included usage,
+    bandwidth and build usage.
+-   A free-tier deployment is suitable for a demo or learning project,
+    not a production availability guarantee.
+
+------------------------------------------------------------------------
+
+## Quick reference
+
+### Local Docker Compose
+
+From the repository root:
+
+``` powershell
+docker compose config
+docker compose build
+docker compose up
 ```
 
-Then:
+### Local Java verification
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8090/health
+From `java-backend/`:
+
+``` powershell
+mvn clean verify
 ```
 
-Verify these `.env` values:
+### Production application
 
-```properties
-AI_WEBHOOK_URL=http://127.0.0.1:8090/ai
-AI_WEBHOOK_SECRET=local-only-test-secret
+Example used is render.com
+
+``` text
+https://rr-chatbot-java.onrender.com
 ```
 
-Make sure the secret matches the mock webhook's configured secret. Inspect both the mock webhook and Spring Boot logs for errors.
+### Python health
 
-### HTTP 401 Unauthorized
-
-The access cookie may be missing, invalid, or expired.
-
-- Log in again.
-- Inspect the failing request in DevTools → Network.
-- Check whether the authentication cookies are present.
-
-### HTTP 403 Forbidden
-
-For state-changing requests:
-
-- Confirm the frontend fetched the CSRF token.
-- Confirm the request includes `X-XSRF-TOKEN`.
-- Check whether the authenticated user owns the requested chat.
-
-### HTTP 429 Too Many Requests
-
-The configured rate limiter may have reached its limit.
-
-Wait for the configured rate-limit window to expire or restart the application for local testing. Do not disable rate limiting in production.
-
-### Chat Appears but History Is Empty
-
-Inspect these requests in DevTools → Network:
-
-```text
-GET /api/v1/chats
-GET /api/v1/chats/{chatId}/messages
+``` text
+https://rr-chatbot-python.onrender.com/health
 ```
 
-Then:
+### Python webhook
 
-1. Check their HTTP status and response bodies.
-2. Confirm the chat belongs to the authenticated user.
-3. Run the SQL query in the database-persistence section.
-4. Send a new message and confirm the exchange succeeds.
-
-An empty message list is expected when the selected chat has no saved message rows.
-
-## Security Notes and Known Limitations
-
-- Keep `.env` local and never commit secrets.
-- Rotate any secret that has been accidentally exposed.
-- Use `COOKIE_SECURE=false` only for local HTTP development.
-- Set `COOKIE_SECURE=true` when deploying over HTTPS.
-- Do not expose PostgreSQL or the AI webhook directly to the public internet.
-- The current `ddl-auto: update` setting is appropriate only for this prototype. Use reviewed, versioned database migrations for production.
-- Rate limiting and in-flight chat guards are in-memory and do not coordinate across multiple application instances.
-- The mock webhook tests the request/response contract and persistence path, not real AI provider quality, reliability, or latency.
-- Perform separate expiry, concurrency, and production-like security testing before release.
-
-Refer to `docs/TESTING_GUIDE.md` for additional testing instructions.
-
-## Quick Start Summary
-
-After installing prerequisites, creating the database, and configuring `.env`, use three terminals.
-
-**Terminal 1 — Mock AI Webhook**
-
-```powershell
-python .\scripts\mock-ai-webhook.py
+``` text
+https://rr-chatbot-python.onrender.com/ai
 ```
 
-**Terminal 2 — Spring Boot**
+### Production request flow
 
-```powershell
-mvn spring-boot:run
+``` text
+Browser
+  -> Java Spring Boot service
+      -> PostgreSQL database
+      -> Python AI webhook
+  <- Java response
+<- Browser UI
 ```
 
-**Browser — Frontend**
-
-```text
-http://127.0.0.1:8080/login.html
-```
-
-**Terminal 3 — API Regression Tests**
-
-```powershell
-.\scripts\Test-ChatbotApi.ps1
-```
-
-Keep the mock webhook and Spring Boot terminals running while using the application and running the API regression suite.
+The Java service owns the browser-facing application and API. The Python
+service is an internal application dependency from the perspective of
+the product flow, even though its Render endpoint is publicly
+addressable.
