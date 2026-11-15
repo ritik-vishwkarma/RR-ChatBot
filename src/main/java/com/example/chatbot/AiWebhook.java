@@ -23,6 +23,13 @@ class AiWebhook {
             @Value("${ai.webhook.secret}") String secret,
             ObjectMapper objectMapper) {
 
+        if (!url.startsWith("https://")
+                && !url.startsWith("http://127.0.0.1")
+                && !url.startsWith("http://localhost")) {
+            throw new IllegalStateException("ai.webhook.url must be https");
+        }
+        
+
         var factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
         factory.setReadTimeout(Duration.ofSeconds(60));

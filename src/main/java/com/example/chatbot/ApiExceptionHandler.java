@@ -64,29 +64,38 @@ class ApiExceptionHandler {
                 );
     }
 
+    // @ExceptionHandler(ResponseStatusException.class)
+    // ResponseEntity<ErrorBody> status(ResponseStatusException ex) {
+    //     HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
+    //     String message = switch (status) {
+    //         case BAD_REQUEST -> "Invalid request";
+    //         case UNAUTHORIZED -> "Authentication required or credentials invalid";
+    //         case FORBIDDEN -> "Request forbidden";
+    //         case NOT_FOUND -> "Resource not found";
+    //         case CONFLICT -> "Request conflicts with current state";
+    //         case TOO_MANY_REQUESTS -> "Too many requests; try again later";
+    //         case BAD_GATEWAY, GATEWAY_TIMEOUT, SERVICE_UNAVAILABLE -> "Dependent service unavailable";
+    //         default -> status.is5xxServerError() ? "Internal server error" : "Request failed";
+    //     };
+
+    //     return ResponseEntity
+    //             .status(status)
+    //             .body(
+    //                 new ErrorBody(
+    //                     false, 
+    //                     message, 
+    //                     null
+    //                 )
+    //             );
+    // }
+
     @ExceptionHandler(ResponseStatusException.class)
     ResponseEntity<ErrorBody> status(ResponseStatusException ex) {
-        HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
-        String message = switch (status) {
-            case BAD_REQUEST -> "Invalid request";
-            case UNAUTHORIZED -> "Authentication required or credentials invalid";
-            case FORBIDDEN -> "Request forbidden";
-            case NOT_FOUND -> "Resource not found";
-            case CONFLICT -> "Request conflicts with current state";
-            case TOO_MANY_REQUESTS -> "Too many requests; try again later";
-            case BAD_GATEWAY, GATEWAY_TIMEOUT, SERVICE_UNAVAILABLE -> "Dependent service unavailable";
-            default -> status.is5xxServerError() ? "Internal server error" : "Request failed";
-        };
-
-        return ResponseEntity
-                .status(status)
-                .body(
-                    new ErrorBody(
-                        false, 
-                        message, 
-                        null
-                    )
-                );
+        return statusBody(
+                HttpStatus.valueOf(
+                    ex.getStatusCode().value()
+                )
+            );
     }
 
     @ExceptionHandler(AccessDeniedException.class)
@@ -104,6 +113,10 @@ class ApiExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<ErrorBody> unexpected(Exception ex) {
+        // if (ex instanceof ErrorResponse er) {
+        //     return statusBody(HttpStatus.valueOf(er.getStatusCode().value()));
+        // }
+        
         log.error("Unhandled API exception", ex);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -114,5 +127,26 @@ class ApiExceptionHandler {
                         null
                     )
                 );
+    }
+
+    
+
+    private static ResponseEntity<ErrorBody> statusBody(HttpStatus status) {
+        String message = switch (status) {
+            case BAD_REQUEST -> "Invalid request";
+            case UNAUTHORIZED -> "Authentication required or credentials invalid";
+            case FORBIDDEN -> "Request forbidden";
+            case NOT_FOUND -> "Resource not found";
+            case METHOD_NOT_ALLOWED -> "Method not allowed";
+            case CONFLICT -> "Request conflicts with current state";
+            case UNSUPPORTED_MEDIA_TYPE -> "Unsupported media type";
+            case TOO_MANY_REQUESTS -> "Too many requests; try again later";
+            case BAD_GATEWAY, GATEWAY_TIMEOUT, SERVICE_UNAVAILABLE -> "Dependent service unavailable";
+            default -> status.is5xxServerError() ? "Internal server error" : "Request failed";
+        };
+
+        return ResponseEntity
+                .status(status)
+                .body(new ErrorBody(false, message, null));
     }
 }

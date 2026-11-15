@@ -19,3 +19,19 @@ __pycache__/
 *.py[cod]
 target/
 .env
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Maven build output
+target/
+
+# Logs
+*.log
+
+# IDE files
+.idea/
+.vscode/
+*.iml

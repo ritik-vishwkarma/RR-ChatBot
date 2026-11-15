@@ -361,7 +361,10 @@ class ApiController {
     ) {
         String o = owner(a);
 
-        if (!limiter.allow("msg:" + o, 20, 60_000)){
+        // if (!limiter.allow("msg:" + o, 20, 60_000)){
+        //     throw http(HttpStatus.TOO_MANY_REQUESTS);
+        // }
+        if (!limiter.allow("day:" + o, 50, 86_400_000) || !limiter.allow("global:ai", 500, 86_400_000)) {
             throw http(HttpStatus.TOO_MANY_REQUESTS);
         }
 

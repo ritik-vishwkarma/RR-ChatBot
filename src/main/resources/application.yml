@@ -3,25 +3,34 @@ spring:
     import: optional:file:./.env[.properties]
 
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/chatbot}
-    username: ${DB_USER:chatbot}
+    url: ${DB_URL}
+    username: ${DB_USER}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5     # free Postgres tiers allow few connections
+      minimum-idle: 0          # serverless DBs suspend when idle
+      connection-timeout: 30000  # allow time for a suspended DB to wake
+
 
   jpa:
     open-in-view: false
     hibernate:
       ddl-auto: update
 
+# server:
+#   port: 8080
+#   servlet:
+#     session:
+#       cookie:
+#         name: SID
+#         http-only: true
+#         secure: ${COOKIE_SECURE:false}
+#         same-site: lax
 server:
-  port: 8080
-  servlet:
-    session:
-      cookie:
-        name: SID
-        http-only: true
-        secure: ${COOKIE_SECURE:false}
-        same-site: lax
+  port: ${PORT:8080}                    # hosts such as Render inject PORT
+  forward-headers-strategy: framework   # real client IP + https behind the proxy
+  shutdown: graceful
 
 ai:
   webhook:
@@ -36,4 +45,4 @@ security:
     refresh-seconds: 864000
 app:
   cookies:
-    secure: ${COOKIE_SECURE:false}
+    secure: ${COOKIE_SECURE:true}
