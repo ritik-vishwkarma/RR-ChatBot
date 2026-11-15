@@ -9,9 +9,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 
-HOST = os.environ.get("MOCK_AI_HOST", "127.0.0.1")
-PORT = int(os.environ.get("MOCK_AI_PORT", "8090"))
-SECRET = os.environ.get("MOCK_AI_WEBHOOK_SECRET", "local-only-test-secret")
+# HOST = os.environ.get("MOCK_AI_HOST", "127.0.0.1")
+# PORT = int(os.environ.get("MOCK_AI_PORT", "8090"))
+# SECRET = os.environ.get("MOCK_AI_WEBHOOK_SECRET", "local-only-test-secret")
+HOST = "0.0.0.0"
+PORT = int(os.environ.get("PORT", "8090"))
+SECRET = os.environ["AI_WEBHOOK_SECRET"]
 
 
 class Handler(BaseHTTPRequestHandler):
