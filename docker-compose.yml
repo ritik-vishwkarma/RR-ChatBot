@@ -1,0 +1,33 @@
+
+services:
+  java-backend:
+    build:
+      context: ./java-backend
+      dockerfile: Dockerfile
+    container_name: chatbot-java
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+      DB_URL: ${DB_URL}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      AI_WEBHOOK_URL: http://python-ai:8090/ai
+      AI_WEBHOOK_SECRET: ${AI_WEBHOOK_SECRET}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    depends_on:
+      - python-ai
+    restart: unless-stopped
+
+  python-ai:
+    build:
+      context: ./python-ai
+      dockerfile: Dockerfile
+    container_name: chatbot-python
+    expose:
+      - "8090"
+    environment:
+      PORT: 8090
+      AI_WEBHOOK_SECRET: ${AI_WEBHOOK_SECRET}
+    restart: unless-stopped
